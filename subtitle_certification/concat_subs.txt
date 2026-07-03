@@ -1,0 +1,10 @@
+ffconcat version 1.0
+
+file video_1.srt
+duration 10.0
+
+file video_2.srt
+duration 10.0
+
+file video_3.srt
+duration 10.0

@@ -1,0 +1,59 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Testing
+coverage/
+
+# Production
+dist/
+
+# Misc
+.DS_Store
+*.pem
+
+# Debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Vite
+.vite/
+
+# Tauri
+src-tauri/target/
+src-tauri/gen/
+
+# FFmpeg binaries (Keep the folder, ignore the heavy executables if desired, 
+# but usually we ignore them and let users download or use placeholders)
+src-tauri/binaries/*.exe
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# MSVC Debug Symbols
+*.pdb
+
+# Windows reserved device names
+**/nul
+nul
+
+certification/target/
+
+# Subtitle certification test outputs (binary files, not source)
+subtitle_certification/output/

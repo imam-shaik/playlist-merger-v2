@@ -1,0 +1,11 @@
+1
+00:00:00,000 --> 00:00:03,000
+Hello
+
+2
+00:00:03,000 --> BAD_TIMESTAMP
+Bad timestamp subtitle
+
+3
+00:00:06,000 --> 00:00:09,000
+Third subtitle

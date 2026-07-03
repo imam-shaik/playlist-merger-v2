@@ -1,0 +1,12 @@
+1
+00:00:05,060 --> 00:00:07,060
+This is subtitle from FILE ONE
+
+2
+00:00:15,060 --> 00:00:17,060
+This is subtitle from FILE TWO
+
+3
+00:00:25,060 --> 00:00:27,060
+This is subtitle from FILE THREE
+

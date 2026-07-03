@@ -1,0 +1,127 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  *, *::before, *::after {
+    box-sizing: border-box;
+  }
+
+  html {
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    margin: 0;
+    padding: 0;
+    background: #08080a;
+    color: #eeeef5;
+    font-family: system-ui, sans-serif;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  /* Allow text selection in inputs */
+  input, textarea, [contenteditable] {
+    user-select: text;
+  }
+
+  /* Custom scrollbar (WebKit) */
+  ::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 2px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.15);
+  }
+
+  /* Firefox scrollbar */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
+  }
+
+  /* Remove default button styles */
+  button {
+    cursor: pointer;
+    border: none;
+    background: none;
+    padding: 0;
+    font-family: inherit;
+  }
+
+  /* Focus visible only for keyboard users */
+  button:focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  /* Reduced motion */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+
+    .animate-spin, .animate-pulse, .animate-shimmer {
+      animation: none !important;
+    }
+  }
+
+  /* High contrast mode adjustments */
+  @media (prefers-contrast: more) {
+    .border-border {
+      border-color: rgba(255, 255, 255, 0.25);
+    }
+    .text-text-muted {
+      color: rgba(255, 255, 255, 0.65);
+    }
+  }
+}
+
+@layer components {
+  /* Glass card */
+  .glass {
+    @apply bg-bg-elevated/80 backdrop-blur-md border border-border;
+  }
+
+  /* Subtle shimmer skeleton */
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.03) 25%,
+      rgba(255, 255, 255, 0.06) 50%,
+      rgba(255, 255, 255, 0.03) 75%
+    );
+    background-size: 200% 100%;
+    @apply animate-shimmer;
+  }
+
+  /* Drag ghost hide default */
+  [data-dnd-overlay] {
+    @apply shadow-modal;
+  }
+}
+
+@layer utilities {
+  /* Prevent text overflow nicely */
+  .text-truncate {
+    @apply truncate;
+  }
+
+  /* Tab-stop only visible outline */
+  .focus-ring {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/50 focus-visible:ring-offset-1 focus-visible:ring-offset-bg-base;
+  }
+}

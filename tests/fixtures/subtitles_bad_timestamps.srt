@@ -1,0 +1,11 @@
+1
+00:00:00,000 --> 00:00:03,000
+Subtitle 1 - valid
+
+2
+00:00:03,000 --> BAD_TIMESTAMP_FORMAT
+Subtitle 2 - invalid timestamp
+
+3
+00:00:06,000 --> 00:00:09,000
+Subtitle 3 - valid

@@ -1,0 +1,158 @@
+generated_at: 2026-06-30T11:29:08.475119600+05:30
+total_tests: 4
+total_passed: 4
+total_failed: 0
+total_warnings: 0
+total_skipped: 0
+phase_reports:
+- phase: H
+  started_at: 2026-06-30T11:29:08.474997900+05:30
+  completed_at: 2026-06-30T11:29:08.475010800+05:30
+  total_tests: 4
+  passed: 4
+  failed: 0
+  warnings: 0
+  skipped: 0
+  results:
+  - phase: H
+    test_name: stress_50_files
+    name: Stress test with 50 files
+    status: pass
+    duration_secs: 3.0407484
+    evidence:
+    - evidence_type: video_file
+      path: ./test_output\stress_50_files.mkv
+      description: Stress test with 50 files
+      checksum: 528792f2f3b7bf1dc56a2b7f7dd7853acd22967fb79320475be57bde49129d33
+      timestamp: 2026-06-30T11:28:50.569911300+05:30
+    logs:
+    - 'Stress 50 files: 1v/1a, 228.1s, 20 MB'
+    error: null
+    metrics:
+      input_file_count: 50
+      output_file_count: 1
+      expected_duration_ms: null
+      actual_duration_ms: null
+      output_size_bytes: 20142567
+      peak_ram_mb: null
+      avg_cpu_percent: null
+      checkpoint_size_bytes: null
+      resume_time_ms: null
+  - phase: H
+    test_name: stress_100_files
+    name: Stress test with 100 files
+    status: pass
+    duration_secs: 5.8098211
+    evidence:
+    - evidence_type: video_file
+      path: ./test_output\stress_100_files.mkv
+      description: Stress test with 100 files
+      checksum: a882df84a510749c4f979e032e264b1af01422855f67eda687d59bd8f09a8495
+      timestamp: 2026-06-30T11:28:56.413136200+05:30
+    logs:
+    - 'Stress 100 files: 1v/1a, 456.1s, 40 MB'
+    error: null
+    metrics:
+      input_file_count: 100
+      output_file_count: 1
+      expected_duration_ms: null
+      actual_duration_ms: null
+      output_size_bytes: 40290107
+      peak_ram_mb: null
+      avg_cpu_percent: null
+      checkpoint_size_bytes: null
+      resume_time_ms: null
+  - phase: H
+    test_name: stress_200_files
+    name: Stress test with 200 files
+    status: pass
+    duration_secs: 11.1154868
+    evidence:
+    - evidence_type: video_file
+      path: ./test_output\stress_200_files.mkv
+      description: Stress test with 200 files
+      checksum: fb2fd8c389dc8dc37874c9940b01e2a113174653dbb0b42d428ba7971cc86dac
+      timestamp: 2026-06-30T11:29:07.589454500+05:30
+    logs:
+    - 'Stress 200 files: 1v/1a, 912.1s, 80 MB'
+    error: null
+    metrics:
+      input_file_count: 200
+      output_file_count: 1
+      expected_duration_ms: null
+      actual_duration_ms: null
+      output_size_bytes: 80611036
+      peak_ram_mb: null
+      avg_cpu_percent: null
+      checkpoint_size_bytes: null
+      resume_time_ms: null
+  - phase: H
+    test_name: memory_performance
+    name: Baseline merge with 5 files
+    status: pass
+    duration_secs: 0.7575999
+    evidence:
+    - evidence_type: video_file
+      path: ./test_output\memory_performance.mkv
+      description: Baseline merge with 5 files
+      checksum: aa4bad3ef16bc7b8392bb0efa475d658c512144de6deb993ccfdc7ed03001248
+      timestamp: 2026-06-30T11:29:08.471610800+05:30
+    logs:
+    - 'Stress 5 files: 1v/1a, 22.9s, 2 MB'
+    error: null
+    metrics:
+      input_file_count: 5
+      output_file_count: 1
+      expected_duration_ms: null
+      actual_duration_ms: null
+      output_size_bytes: 2014390
+      peak_ram_mb: null
+      avg_cpu_percent: null
+      checkpoint_size_bytes: null
+      resume_time_ms: null
+subsystem_scores:
+- subsystem: FastMkv
+  score: 10.0
+  evidence_count: 0
+  status: pass
+- subsystem: SmartMkv
+  score: 10.0
+  evidence_count: 0
+  status: pass
+- subsystem: Lossless
+  score: 10.0
+  evidence_count: 0
+  status: pass
+- subsystem: Custom
+  score: 10.0
+  evidence_count: 0
+  status: pass
+- subsystem: Repeat
+  score: 10.0
+  evidence_count: 0
+  status: pass
+- subsystem: Split
+  score: 10.0
+  evidence_count: 0
+  status: pass
+- subsystem: Cards
+  score: 10.0
+  evidence_count: 0
+  status: pass
+- subsystem: Recovery
+  score: 10.0
+  evidence_count: 0
+  status: pass
+- subsystem: Audio
+  score: 10.0
+  evidence_count: 0
+  status: pass
+- subsystem: Subtitle
+  score: 10.0
+  evidence_count: 0
+  status: pass
+- subsystem: Stress
+  score: 10.0
+  evidence_count: 3
+  status: pass
+overall_score: 10.0

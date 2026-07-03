@@ -1,0 +1,29 @@
+{
+  "version": 2,
+  "jobId": "crash_test_concat",
+  "phase": "normalizing",
+  "startedAt": 1781355015,
+  "inputFiles": [
+    "\\\\?\\C:\\Users\\IMAM\\Desktop\\playlist-merger-v2\\certification\\media_assets\\h264_720p_1.mp4",
+    "\\\\?\\C:\\Users\\IMAM\\Desktop\\playlist-merger-v2\\certification\\media_assets\\h264_720p_2.mp4",
+    "\\\\?\\C:\\Users\\IMAM\\Desktop\\playlist-merger-v2\\certification\\media_assets\\h264_720p_3.mp4"
+  ],
+  "outputPath": "./test_output\\recovery_crash_concat_output.mkv",
+  "mode": "lossless",
+  "dominantProfile": {
+    "vCodec": null,
+    "vWidth": null,
+    "vHeight": null,
+    "vFps": null,
+    "aCodec": null,
+    "aSampleRate": null,
+    "aChannels": null,
+    "timescaleDen": null
+  },
+  "completedFiles": [],
+  "remainingIndices": [
+    0,
+    1,
+    2
+  ]
+}

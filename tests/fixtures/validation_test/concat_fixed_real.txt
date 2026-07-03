@@ -1,0 +1,6 @@
+file 'C:/Users/IMAM/Desktop/playlist-merger-v2/tests/fixtures/validation_test/validate1.mp4'
+duration 10
+file 'C:/Users/IMAM/Desktop/playlist-merger-v2/tests/fixtures/validation_test/validate2.mp4'
+duration 10
+file 'C:/Users/IMAM/Desktop/playlist-merger-v2/tests/fixtures/validation_test/norm_fixed_validate3.mp4'
+duration 10

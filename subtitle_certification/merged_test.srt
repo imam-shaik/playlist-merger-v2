@@ -1,0 +1,12 @@
+1
+00:00:05,000 --> 00:00:07,000
+This is subtitle from FILE ONE
+
+2
+00:00:15,000 --> 00:00:17,000
+This is subtitle from FILE TWO
+
+3
+00:00:25,000 --> 00:00:27,000
+This is subtitle from FILE THREE
+

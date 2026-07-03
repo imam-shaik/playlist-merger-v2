@@ -1,0 +1,2 @@
+﻿file 'C:/Users/IMAM/Desktop/playlist-merger-v2/tests/fixtures/controlled_test/file_a.mp4'
+file 'C:/Users/IMAM/Desktop/playlist-merger-v2/tests/fixtures/controlled_test/file_b.mp4'
