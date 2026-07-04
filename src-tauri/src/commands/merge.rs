@@ -16,6 +16,7 @@ use crate::ffmpeg::get_temp_dir;
 use crate::ffmpeg::probe_cache::probe_all_parallel;
 use crate::ffmpeg::normalization::{normalize_to_profile as ffmpeg_normalize_to_profile, normalize_audio_only as ffmpeg_normalize_audio_only, EncodingProfile, AudioProfile};
 use crate::ffmpeg::media_validation_engine::{validate_input_files, apply_validation_results};
+use crate::ffmpeg::immutability::{ImmutabilityRegistry, AudioFingerprint};
 
 // ══════════════════════════════════════════════════════════════════════════════
 // REAL WORKLOAD FORENSIC INSTRUMENTATION
@@ -1078,10 +1079,12 @@ pub struct MergeSegment {
 #[allow(clippy::too_many_arguments)]
 async fn normalize_to_profile(
     ffmpeg_path: &Path, input_path: &str, target_vcodec: &str, target_acodec: &str, target_sr: u32, target_fps: Option<f64>, target_timescale: Option<u32>, target_width: Option<u32>, target_height: Option<u32>,
-    target_channels: Option<u32>, temp_dir: &Path, job_id: &str, index: usize, has_audio: bool, cancel_flag: Arc<AtomicBool>,
+    target_channels: Option<u32>, target_audio_bitrate: Option<String>, temp_dir: &Path, job_id: &str, index: usize, has_audio: bool, cancel_flag: Arc<AtomicBool>,
     norm_cache: Option<std::sync::Arc<crate::ffmpeg::norm_cache::NormalizationCache>>,
     input_duration: Option<f64>,
     input_video_duration_ms: Option<u64>,
+    ffprobe_path: Option<&Path>,
+    input_audio_sample_rate: Option<u32>,
 ) -> Result<String, String> {
     let profile = EncodingProfile::new(
         target_vcodec,
@@ -1092,11 +1095,11 @@ async fn normalize_to_profile(
         target_width,
         target_height,
         target_channels,
-    );
+    ).with_bitrate(target_audio_bitrate);
     ffmpeg_normalize_to_profile(
         ffmpeg_path, input_path, &profile,
         temp_dir, job_id, index, has_audio, cancel_flag,
-        norm_cache, input_duration, input_video_duration_ms,
+        norm_cache, input_duration, input_video_duration_ms, ffprobe_path, input_audio_sample_rate,
     ).await
 }
 
@@ -1343,20 +1346,22 @@ async fn normalize_timescale_lossless(
 #[allow(clippy::too_many_arguments)]
 async fn normalize_audio_only(
     ffmpeg_path: &Path, input_path: &str, target_acodec: &str, target_sr: u32, target_timescale: Option<u32>,
-    target_channels: Option<u32>, temp_dir: &Path, job_id: &str, index: usize, cancel_flag: Arc<AtomicBool>,
+    target_channels: Option<u32>, audio_bitrate: Option<String>, temp_dir: &Path, job_id: &str, index: usize, cancel_flag: Arc<AtomicBool>,
     norm_cache: Option<std::sync::Arc<crate::ffmpeg::norm_cache::NormalizationCache>>,
     input_video_duration_ms: Option<u64>,
+    ffprobe_path: Option<&Path>,
+    input_audio_sample_rate: Option<u32>,
 ) -> Result<String, String> {
     let audio_profile = AudioProfile::new(
         target_acodec,
         target_sr,
         target_timescale,
         target_channels,
-    );
+    ).with_bitrate(audio_bitrate);
     ffmpeg_normalize_audio_only(
         ffmpeg_path, input_path, &audio_profile,
         temp_dir, job_id, index, cancel_flag,
-        norm_cache, input_video_duration_ms,
+        norm_cache, input_video_duration_ms, ffprobe_path, input_audio_sample_rate,
     ).await
 }
 
@@ -3229,6 +3234,12 @@ use crate::ffmpeg::normalization::NormalizationType;
     log::info!("[AUDIO_NORM_DECISION] Dominant a_sample_rate: {:?}", analysis.dominant.a_sample_rate);
     log::info!("[AUDIO_NORM_DECISION] Dominant a_channels: {:?}", analysis.dominant.a_channels);
 
+    // ── IMMUTABILITY REGISTRY (Audit-Only Mode) ──────────────────────
+    // Created at function scope, shared across all normalization workers.
+    // Used ONLY for audit logging — actual immutability is still path-based.
+    let immutability_registry = std::sync::Arc::new(ImmutabilityRegistry::new());
+    log::info!("[IMMUTABILITY:REGISTRY] Created audit-only ImmutabilityRegistry for this job");
+
     if needs_normalization {
 
 let mut need_audio_norm = Vec::new();
@@ -3872,6 +3883,10 @@ let mut need_audio_norm = Vec::new();
         };
         let total_norm_parts = norm_part_groups.len();
 
+        // SINGLE-PASS GUARD: Shared NormalizationCache across profile norm AND audio norm.
+        // Prevents double-normalization of files that appear in both phases.
+        let shared_norm_cache = std::sync::Arc::new(crate::ffmpeg::norm_cache::NormalizationCache::new());
+
         // ── Phase 7: Parallel Profile Normalization (tokio::JoinSet + Semaphore) ──
         if !need_profile_norm_iter.is_empty() {
             // [P0-2/P0-3] Check for recovered files before spawning normalization tasks
@@ -3930,7 +3945,7 @@ let mut need_audio_norm = Vec::new();
             let ao_par = analysis.outliers.clone();
             let aao_par = analysis.audio_outliers.clone();
 
-            let shared_norm_cache = std::sync::Arc::new(crate::ffmpeg::norm_cache::NormalizationCache::new());
+            // Uses shared_norm_cache from above (single-pass guarantee)
             for (pp_idx, pp_indices) in profile_part_groups.iter().enumerate() {
                 if total_profile_parts > 1 {
                     log::info!("[Phase7] Profile norm Part {}/{}: {} files", pp_idx + 1, total_profile_parts, pp_indices.len());
@@ -3952,6 +3967,7 @@ let mut need_audio_norm = Vec::new();
                 let ow = orig_wif.clone();
 
                 let norm_cache = shared_norm_cache.clone();
+                let imm_reg = immutability_registry.clone();
                 js.spawn(async move {
                     let _permit = match s.acquire().await { Ok(p) => p, Err(_) => { return } };
                     // Check prior error
@@ -4003,6 +4019,14 @@ let mut need_audio_norm = Vec::new();
                     let input_dur = p.get(std::path::Path::new(&fpath)).and_then(|r| r.ok()).map(|i| i.duration);
                     let input_has_audio = p.get(std::path::Path::new(&fpath)).and_then(|r| r.ok()).map(|i| !i.audio_streams.is_empty()).unwrap_or(false);
                     let input_video_duration_ms = ow.get(idx).and_then(|op| p.get(std::path::Path::new(op)).and_then(|r| r.ok()).and_then(|i| i.video_streams.first().and_then(|s| s.duration)).map(|d| (d * 1000.0) as u64));
+                    let input_audio_sample_rate = p.get(std::path::Path::new(&fpath))
+                        .and_then(|r| r.ok())
+                        .and_then(|i| { i.audio_streams.first().map(|a| a.sample_rate) })
+                        .flatten();
+                    let input_audio_bitrate = p.get(std::path::Path::new(&fpath))
+                        .and_then(|r| r.ok())
+                        .and_then(|i| i.audio_streams.first().and_then(|a| a.bit_rate))
+                        .map(|br| format!("{}k", br / 1000));
                     let res = if only_remux {
                         if let Some(ts) = dm.timescale_den {
                             normalize_timescale_lossless(&ff, &fpath, ts, &td, &j, idx, c.clone(), Some(norm_cache.clone())).await
@@ -4026,8 +4050,8 @@ let mut need_audio_norm = Vec::new();
                     } else {
                         normalize_to_profile(&ff, &fpath, dm.v_codec.as_deref().unwrap_or("libx264"),
                             dm.a_codec.as_deref().unwrap_or("aac"), dm.a_sample_rate.unwrap_or(48000),
-                            dm.v_fps, dm.timescale_den, dm.v_width, dm.v_height, dm.a_channels, &td, &j, idx, input_has_audio, c.clone(),
-                            Some(norm_cache.clone()), input_dur, input_video_duration_ms).await
+                            dm.v_fps, dm.timescale_den, dm.v_width, dm.v_height, dm.a_channels, input_audio_bitrate.clone(), &td, &j, idx, input_has_audio, c.clone(),
+                            Some(norm_cache.clone()), input_dur, input_video_duration_ms, Some(&fp), input_audio_sample_rate).await
                     };
                     log::info!("[FORENSIC:NORMALIZE] END: {} | File #{} | Elapsed: {:?}",
                         if only_remux && dm.timescale_den.is_some() { "Timescale Remux (Lossless)" }
@@ -4038,6 +4062,20 @@ let mut need_audio_norm = Vec::new();
                             f.lock().unwrap_or_else(|p| p.into_inner()).record_file_norm_end(idx, &path);
                             nf.lock().unwrap_or_else(|p| p.into_inner()).push(std::path::PathBuf::from(&path));
                             { let mut wg = w.lock().unwrap_or_else(|p| p.into_inner()); wg[idx] = path.clone(); }
+
+                            // ── IMMUTABILITY REGISTRY: Register after profile normalization ──
+                            // Audit-only: registry tracks what was normalized for consistency checks.
+                            {
+                                let fingerprint = AudioFingerprint {
+                                    codec: dm.a_codec.clone().unwrap_or_else(|| "aac".to_string()),
+                                    sample_rate: dm.a_sample_rate.unwrap_or(48000),
+                                    channels: dm.a_channels.unwrap_or(2),
+                                    bitrate: input_audio_bitrate.as_ref().and_then(|s| s.trim_end_matches('k').parse::<u64>().ok()).map(|b| b * 1000),
+                                    profile: None,
+                                };
+                                imm_reg.register(&fpath, &path, fingerprint, &j);
+                            }
+
                             if matches!(idx, 10 | 24 | 32) {
                                 log::info!("[FORENSIC_TRACE] File #{} | VIDEO WORKER COMPLETE | normalized_path={}", idx, path);
                             }
@@ -4213,7 +4251,7 @@ let _ = app_handle.emit("merge-error", &serde_json::json!({"jobId":request.job_i
             let aao_par = analysis.audio_outliers.clone();
             let ppn_par = need_profile_norm_iter.clone(); // needed to avoid full re-encode for audio-only files
 
-            let shared_norm_cache = std::sync::Arc::new(crate::ffmpeg::norm_cache::NormalizationCache::new());
+            // Uses the same shared_norm_cache from profile norm phase (single-pass guarantee)
             for (ap_idx, ap_indices) in audio_part_groups.iter().enumerate() {
                 if total_audio_parts > 1 {
                     log::info!("[Phase7] Audio norm Part {}/{}: {} files", ap_idx + 1, total_audio_parts, ap_indices.len());
@@ -4235,12 +4273,21 @@ let _ = app_handle.emit("merge-error", &serde_json::json!({"jobId":request.job_i
                 let ow = orig_wif.clone();
 
                 let norm_cache = shared_norm_cache.clone();
+                let imm_reg = immutability_registry.clone();
                 js.spawn(async move {
                     let _permit = match s.acquire().await { Ok(p) => p, Err(_) => { return } };
                     if let Ok(eg) = e.lock() { if eg.is_some() { return } }
                     if c.load(Ordering::Relaxed) { return }
-                    // Skip if already normalized by profile loop
-                    if dm.timescale_den.is_some() { let ag = a.lock().unwrap_or_else(|p| p.into_inner()); if ag.contains(&idx) { return } }
+                    // SINGLE-PASS GUARD: Skip if already normalized by profile loop.
+                    // This is UNCONDITIONAL — files in both need_profile_norm and need_audio_norm
+                    // must NOT be normalized twice (causes double AAC re-encode = "kee kee" artifacts).
+                    {
+                        let ag = a.lock().unwrap_or_else(|p| p.into_inner());
+                        if ag.contains(&idx) {
+                            log::info!("[SINGLE_PASS_GUARD] File #{} skipped audio norm — already profile-normalized", idx);
+                            return;
+                        }
+                    }
                     let fpath = { let wg = w.lock().unwrap_or_else(|p| p.into_inner()); wg[idx].clone() };
                     let fname = std::path::Path::new(&fpath).file_name()
                         .map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "file".to_string());
@@ -4291,18 +4338,26 @@ let _ = app_handle.emit("merge-error", &serde_json::json!({"jobId":request.job_i
                     let input_dur = p.get(std::path::Path::new(&fpath)).and_then(|r| r.ok()).map(|i| i.duration);
                     let input_has_audio = p.get(std::path::Path::new(&fpath)).and_then(|r| r.ok()).map(|i| !i.audio_streams.is_empty()).unwrap_or(false);
                     let input_video_duration_ms = ow.get(idx).and_then(|op| p.get(std::path::Path::new(op)).and_then(|r| r.ok()).and_then(|i| i.video_streams.first().and_then(|s| s.duration)).map(|d| (d * 1000.0) as u64));
+                    let input_audio_sample_rate = p.get(std::path::Path::new(&fpath))
+                        .and_then(|r| r.ok())
+                        .and_then(|i| { i.audio_streams.first().map(|a| a.sample_rate) })
+                        .flatten();
+                    let input_audio_bitrate = p.get(std::path::Path::new(&fpath))
+                        .and_then(|r| r.ok())
+                        .and_then(|i| i.audio_streams.first().and_then(|a| a.bit_rate))
+                        .map(|br| format!("{}k", br / 1000));
                     // Route: only escalate to full re-encode if the file actually needs video normalization.
                     // AAC-only files (e.g. HE-AAC→LC profile fix) use audio-only normalization
                     // even when dm.timescale_den is Some — the video is already at dominant settings.
                     let res = if needs_video_norm {
                         normalize_to_profile(&ff, &fpath, dm.v_codec.as_deref().unwrap_or("libx264"),
                             dm.a_codec.as_deref().unwrap_or("aac"), dm.a_sample_rate.unwrap_or(48000),
-                            dm.v_fps, dm.timescale_den, dm.v_width, dm.v_height, dm.a_channels, &td, &j, idx, input_has_audio, c.clone(),
-                            Some(norm_cache.clone()), input_dur, input_video_duration_ms).await
+                            dm.v_fps, dm.timescale_den, dm.v_width, dm.v_height, dm.a_channels, input_audio_bitrate.clone(), &td, &j, idx, input_has_audio, c.clone(),
+                            Some(norm_cache.clone()), input_dur, input_video_duration_ms, Some(&fp), input_audio_sample_rate).await
                     } else {
                         normalize_audio_only(&ff, &fpath, dm.a_codec.as_deref().unwrap_or("aac"),
-                            dm.a_sample_rate.unwrap_or(48000), dm.timescale_den, dm.a_channels, &td, &j, idx, c.clone(),
-                            Some(norm_cache.clone()), input_video_duration_ms).await
+                            dm.a_sample_rate.unwrap_or(48000), dm.timescale_den, dm.a_channels, input_audio_bitrate, &td, &j, idx, c.clone(),
+                            Some(norm_cache.clone()), input_video_duration_ms, Some(&fp), input_audio_sample_rate).await
                     };
                     log::info!("[FORENSIC:NORMALIZE] END: Audio Normalize | File #{} | Elapsed: {:?}", idx, ns.elapsed());
                     match res {
@@ -4310,6 +4365,20 @@ let _ = app_handle.emit("merge-error", &serde_json::json!({"jobId":request.job_i
                             f.lock().unwrap_or_else(|p| p.into_inner()).record_file_norm_end(idx, &path);
                             nf.lock().unwrap_or_else(|p| p.into_inner()).push(std::path::PathBuf::from(&path));
                             { let mut wg = w.lock().unwrap_or_else(|p| p.into_inner()); wg[idx] = path.clone(); }
+
+                            // ── IMMUTABILITY REGISTRY: Register after audio-only normalization ──
+                            // Audit-only: registry tracks what was normalized for consistency checks.
+                            {
+                                let fingerprint = AudioFingerprint {
+                                    codec: dm.a_codec.clone().unwrap_or_else(|| "aac".to_string()),
+                                    sample_rate: dm.a_sample_rate.unwrap_or(48000),
+                                    channels: dm.a_channels.unwrap_or(2),
+                                    bitrate: None,
+                                    profile: None,
+                                };
+                                imm_reg.register(&fpath, &path, fingerprint, &j);
+                            }
+
                             if matches!(idx, 10 | 24 | 32) {
                                 log::info!("[FORENSIC_TRACE] File #{} | AUDIO WORKER COMPLETE | normalized_path={}", idx, path);
                             }
@@ -5534,9 +5603,80 @@ sorted.sort_by_key(|b| std::cmp::Reverse(b.1));
     log::info!("[CARDS:CONCAT_AUDIT] Segment is_card flags: {:?}", final_segment_cards.iter().map(|(c, _)| *c).collect::<Vec<_>>());
     log::info!("[CARDS:CONCAT_AUDIT] ═══════════════════════════════════════════════════════════");
 
+    // ── AUDIO IMMUTABILITY: Detect if any file was normalized ────────────
+    // If ANY file was normalized in Phase 6 (profile) or Phase 7 (audio),
+    // Custom concat MUST use -c:a copy to prevent second-generation AAC loss.
+    // The concat demuxer applies the same -c:a to ALL files, so a single
+    // normalized file forces audio copy for the entire concat.
+    let audio_was_normalized = working_input_files.iter().any(|p| {
+        p.contains("/norm_prof_") || p.contains("\\norm_prof_") ||
+        p.contains("/norm_audio_") || p.contains("\\norm_audio_") ||
+        p.contains("/norm_ts_") || p.contains("\\norm_ts_")
+    });
+    if audio_was_normalized {
+        log::info!("[IMMUTABILITY] Files were normalized → Custom concat will use -c:a copy for ALL files");
+    } else {
+        log::info!("[IMMUTABILITY] No files normalized → Custom concat can use user-specified audio codec");
+    }
+
+    // ── IMMUTABILITY AUDIT: Path-based vs Registry consistency check ─────
+    // Compares the path-based heuristic against the registry's tracking.
+    // Audit-only: does NOT change behavior. Logs mismatches for investigation.
+    {
+        let mut path_detected: Vec<(usize, String)> = Vec::new();
+        let mut registry_detected: Vec<(usize, String)> = Vec::new();
+        let mut matches = 0usize;
+        let mut mismatches = 0usize;
+        let mut mismatch_details: Vec<String> = Vec::new();
+
+        for (i, path) in working_input_files.iter().enumerate() {
+            let path_result = path.contains("/norm_prof_") || path.contains("\\norm_prof_")
+                || path.contains("/norm_audio_") || path.contains("\\norm_audio_")
+                || path.contains("/norm_ts_") || path.contains("\\norm_ts_");
+            let registry_result = immutability_registry.is_immutable(path);
+
+            if path_result { path_detected.push((i, path.clone())); }
+            if registry_result { registry_detected.push((i, path.clone())); }
+
+            if path_result == registry_result {
+                matches += 1;
+            } else {
+                mismatches += 1;
+                mismatch_details.push(format!("  File #{}: path={} registry={} | {}",
+                    i, path_result, registry_result,
+                    Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
+            }
+        }
+
+        let total = matches + mismatches;
+        let match_pct = if total > 0 { (matches as f64 / total as f64) * 100.0 } else { 100.0 };
+
+        log::info!("[IMMUTABILITY:CONSISTENCY] ════════════════════════════════════════════════════");
+        log::info!("[IMMUTABILITY:CONSISTENCY] PATH-BASED vs REGISTRY COMPARISON");
+        log::info!("[IMMUTABILITY:CONSISTENCY] ════════════════════════════════════════════════════");
+        log::info!("[IMMUTABILITY:CONSISTENCY] Path-based detected: {} files", path_detected.len());
+        log::info!("[IMMUTABILITY:CONSISTENCY] Registry detected:    {} files", registry_detected.len());
+        log::info!("[IMMUTABILITY:CONSISTENCY] Matches:    {} / {} ({:.0}%)", matches, total, match_pct);
+        log::info!("[IMMUTABILITY:CONSISTENCY] Mismatches: {} / {} ({:.0}%)", mismatches, total, 100.0 - match_pct);
+
+        if mismatches > 0 {
+            log::warn!("[IMMUTABILITY:CONSISTENCY] ⚠️ MISMATCH DETECTED — these files differ between path and registry:");
+            for detail in &mismatch_details {
+                log::warn!("[IMMUTABILITY:CONSISTENCY]{}", detail);
+            }
+        } else {
+            log::info!("[IMMUTABILITY:CONSISTENCY] ✅ All files consistent between path-based and registry detection");
+        }
+        log::info!("[IMMUTABILITY:CONSISTENCY] ════════════════════════════════════════════════════");
+    }
+
     let config = MergeConfig {
         input_files: final_input_files.clone(), input_names: final_input_names.clone(), input_durations: final_input_durations.clone(), subtitle_list_path: final_subtitle_list_path.clone(), output_path: normalized_output_path.clone(), mode: actual_mode.clone(), total_duration: final_total_duration, video_codec: actual_video_codec, audio_codec: actual_audio_codec, video_crf: actual_video_crf, video_preset: actual_video_preset, audio_bitrate: actual_audio_bitrate, target_resolution: request.target_resolution.clone(), target_fps: request.target_fps.clone(), hw_accel: request.hw_accel.clone(), split_config: request.split_config.clone(), naming_config: request.naming_config.clone(), subtitle_files: final_prepared_subs.clone(), subtitle_mode, export_merged_srt, segment_is_card: final_segment_cards.iter().map(|(c, _)| *c).collect(), card_config: request.card_config.clone(), burn_subtitle_path: burn_subtitle_path.clone(),
             mkvmerge_succeeded_before_ffmpeg: false,
+            // Audio immutability: if any file was normalized (Phase 6 or 7),
+            // Custom concat MUST use -c:a copy to prevent second-generation AAC loss.
+            audio_normalized: audio_was_normalized,
+            immutability_registry: Some(immutability_registry),
     };
 
     let merge_state_ref = state.merge_state.clone(); let job_id = request.job_id.clone(); let job_id_for_return = request.job_id.clone(); let output_path = normalized_output_path.clone();
@@ -5552,7 +5692,11 @@ sorted.sort_by_key(|b| std::cmp::Reverse(b.1));
 
     // ── mkvmerge zero-copy dispatch (SmartMKV / FastMKV only) ──
     let mkvmerge_path = crate::ffmpeg::mkvmerge::find_mkvmerge();
-    let will_use_mkvmerge = (actual_mode == MergeMode::SmartMkv || actual_mode == MergeMode::FastMkv) && mkvmerge_path.is_some();
+    let split_active = request.split_config.as_ref().map_or(false, |sc| sc.mode != crate::types::SplitMode::None);
+    let will_use_mkvmerge = (actual_mode == MergeMode::SmartMkv || actual_mode == MergeMode::FastMkv) && mkvmerge_path.is_some() && !split_active;
+    if split_active && (actual_mode == MergeMode::SmartMkv || actual_mode == MergeMode::FastMkv) {
+        log::info!("[PERF] mkvmerge skipped: split mode {:?} is active — FFmpeg split-merge handles per-folder output", request.split_config.as_ref().map(|sc| &sc.mode));
+    }
     if will_use_mkvmerge {
         log::info!("[PERF] mkvmerge detected — using zero-copy MKV concat for {:?}", actual_mode);
     } else if mkvmerge_path.is_some() {
@@ -5665,6 +5809,8 @@ sorted.sort_by_key(|b| std::cmp::Reverse(b.1));
         // CRITICAL TIMING LOG: This proves if FFmpeg concat runs AFTER mkvmerge succeeded
         let concat_reason = if mkvmerge_succeeded {
             "mkvmerge_succeeded_will_overwrite"
+        } else if split_active {
+            "mkvmerge_skipped_split_active"
         } else if actual_mode == MergeMode::FastMkv {
             "mkvmerge_failed_fallback"
         } else {

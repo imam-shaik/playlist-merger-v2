@@ -433,18 +433,28 @@ async fn run_section_merge_impl(
                             .and_then(|r| r.ok())
                             .and_then(|mi| mi.video_streams.first().and_then(|s| s.duration))
                             .map(|d| (d * 1000.0) as u64);
+                        let input_audio_sample_rate = probe_cache.get(std::path::Path::new(file_path))
+                            .and_then(|r| r.ok())
+                            .and_then(|mi| { mi.audio_streams.first().map(|a| a.sample_rate) })
+                            .flatten();
+                        let input_audio_bitrate = probe_cache.get(std::path::Path::new(file_path))
+                            .and_then(|r| r.ok())
+                            .and_then(|mi| mi.audio_streams.first().and_then(|a| a.bit_rate))
+                            .map(|br| format!("{}k", br / 1000));
                         let audio_profile = AudioProfile::new(
                             dom.a_codec.as_deref().unwrap_or("aac"),
                             dom.a_sample_rate.unwrap_or(48000),
                             dom.timescale_den,
                             dom.a_channels,
-                        );
+                        ).with_bitrate(input_audio_bitrate);
                         normalize_audio_only(
                             &ffmpeg_path, file_path,
                             &audio_profile,
                             &temp_dir, job_id, file_idx,
                             cancel_flag.clone(), Some(norm_cache.clone()),
                             input_video_duration_ms,
+                            Some(&ffprobe_path),
+                            input_audio_sample_rate,
                         ).await
                     }
                     NormalizationType::VideoReencode | NormalizationType::FullReencode => {
@@ -452,6 +462,14 @@ async fn run_section_merge_impl(
                             .and_then(|r| r.ok())
                             .and_then(|mi| mi.video_streams.first().and_then(|s| s.duration))
                             .map(|d| (d * 1000.0) as u64);
+                        let input_audio_sample_rate = probe_cache.get(std::path::Path::new(file_path))
+                            .and_then(|r| r.ok())
+                            .and_then(|mi| { mi.audio_streams.first().map(|a| a.sample_rate) })
+                            .flatten();
+                        let input_audio_bitrate = probe_cache.get(std::path::Path::new(file_path))
+                            .and_then(|r| r.ok())
+                            .and_then(|mi| mi.audio_streams.first().and_then(|a| a.bit_rate))
+                            .map(|br| format!("{}k", br / 1000));
                         let encoding_profile = EncodingProfile::new(
                             dom.v_codec.as_deref().unwrap_or("libx264"),
                             dom.a_codec.as_deref().unwrap_or("aac"),
@@ -461,7 +479,7 @@ async fn run_section_merge_impl(
                             dom.v_width,
                             dom.v_height,
                             dom.a_channels,
-                        );
+                        ).with_bitrate(input_audio_bitrate);
                         normalize_to_profile(
                             &ffmpeg_path, file_path,
                             &encoding_profile,
@@ -470,6 +488,8 @@ async fn run_section_merge_impl(
                             cancel_flag.clone(), Some(norm_cache.clone()),
                             None,
                             input_video_duration_ms,
+                            Some(&ffprobe_path),
+                            input_audio_sample_rate,
                         ).await
                     }
                     NormalizationType::None => continue,
@@ -547,6 +567,10 @@ async fn run_section_merge_impl(
                 card_config: None,
                 burn_subtitle_path: None,
                 mkvmerge_succeeded_before_ffmpeg: false,
+                // Audio immutability: if any file was normalized in this section,
+                // Custom concat MUST use -c:a copy to prevent second-generation AAC loss.
+                audio_normalized: !normalized_paths.is_empty(),
+                immutability_registry: None, // Registry integration is future work
             };
 
             let ffmpeg_buf = ffmpeg_path.to_path_buf();

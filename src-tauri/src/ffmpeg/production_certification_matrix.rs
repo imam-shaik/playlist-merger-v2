@@ -119,6 +119,8 @@ mod production_certification {
             export_merged_srt: false,
             burn_subtitle_path: None,
             mkvmerge_succeeded_before_ffmpeg: false,
+            audio_normalized: false,
+            immutability_registry: None,
         };
 
         // 3. RUN MERGE (Capture Preparation Latency)

@@ -8,6 +8,7 @@ pub mod fast_mkv;
 pub mod repeat;
 pub mod repeat_merge;
 pub mod norm_cache;
+pub mod immutability;
 pub mod mkvmerge;
 pub mod section_planner;
 pub mod subtitle_timeline;
@@ -95,6 +96,9 @@ pub mod production_certification_matrix;
 pub mod normalization_performance_audit;
 
 #[cfg(test)]
+pub mod audio_transformation_trace;
+
+#[cfg(test)]
 pub mod audio_codec_certification_test;
 
 #[cfg(test)]
@@ -110,6 +114,12 @@ pub mod subtitle_audit;
 
 #[cfg(test)]
 pub mod card_production_certification;
+
+#[cfg(test)]
+pub mod timeline_consistency_audit;
+
+#[cfg(test)]
+pub mod split_certification;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

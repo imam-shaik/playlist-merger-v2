@@ -263,6 +263,7 @@ pub struct EncodingProfile {
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub channels: Option<u32>,
+    pub bitrate: Option<String>,
 }
 
 impl EncodingProfile {
@@ -286,7 +287,14 @@ impl EncodingProfile {
             width,
             height,
             channels,
+            bitrate: None,
         }
+    }
+
+    /// Set the audio bitrate for encoding.
+    pub fn with_bitrate(mut self, bitrate: Option<String>) -> Self {
+        self.bitrate = bitrate;
+        self
     }
 }
 
@@ -297,6 +305,7 @@ pub struct AudioProfile {
     pub sample_rate: u32,
     pub timescale: Option<u32>,
     pub channels: Option<u32>,
+    pub bitrate: Option<String>,
 }
 
 impl AudioProfile {
@@ -311,7 +320,101 @@ impl AudioProfile {
             sample_rate,
             timescale,
             channels,
+            bitrate: None,
         }
+    }
+
+    /// Set the audio bitrate for encoding.
+    pub fn with_bitrate(mut self, bitrate: Option<String>) -> Self {
+        self.bitrate = bitrate;
+        self
+    }
+}
+
+/// Certification audit record for a single normalization operation.
+/// Captures the exact transformation applied and before/after properties
+/// for debugging audio quality issues.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct NormalizationAudit {
+    pub file_index: usize,
+    pub input_path: String,
+    pub output_path: String,
+    pub normalization_type: String,
+    // Input properties
+    pub input_codec: String,
+    pub input_profile: Option<String>,
+    pub input_sample_rate: Option<u32>,
+    pub input_channels: Option<u32>,
+    pub input_bitrate: Option<u64>,
+    pub input_duration: f64,
+    // Target properties
+    pub target_codec: String,
+    pub target_sample_rate: u32,
+    pub target_channels: Option<u32>,
+    // Output properties (probed after normalization)
+    pub output_codec: Option<String>,
+    pub output_profile: Option<String>,
+    pub output_sample_rate: Option<u32>,
+    pub output_channels: Option<u32>,
+    pub output_bitrate: Option<u64>,
+    pub output_duration: Option<f64>,
+    // Transformation summary
+    pub profile_changed: bool,
+    pub sample_rate_changed: bool,
+    pub channels_changed: bool,
+    pub bitrate_changed: bool,
+    pub resample_applied: bool,
+    pub ffprobe_available: bool,
+}
+
+impl NormalizationAudit {
+    /// Log the full certification audit report for this normalization.
+    pub fn log_report(&self) {
+        log::info!("╔══════════════════════════════════════════════════════════════════════════════╗");
+        log::info!("║  NORMALIZATION CERTIFICATION AUDIT — File #{}                               ║", self.file_index);
+        log::info!("╠══════════════════════════════════════════════════════════════════════════════╣");
+        log::info!("║  INPUT                                                                     ║");
+        log::info!("║    Path:         {}║", truncate_path(&self.input_path, 56));
+        log::info!("║    Codec:        {:<54}║", self.input_codec);
+        log::info!("║    Profile:      {:<54}║", self.input_profile.as_deref().unwrap_or("N/A"));
+        log::info!("║    Sample Rate:  {:<54}║", self.input_sample_rate.map(|r| format!("{} Hz", r)).unwrap_or_else(|| "N/A".to_string()));
+        log::info!("║    Channels:     {:<54}║", self.input_channels.map(|c| c.to_string()).unwrap_or_else(|| "N/A".to_string()));
+        log::info!("║    Bitrate:      {:<54}║", self.input_bitrate.map(|b| format!("{} bps", b)).unwrap_or_else(|| "N/A (FFmpeg will use default)".to_string()));
+        log::info!("║    Duration:     {:<54.3}║", self.input_duration);
+        log::info!("║                                                                              ║");
+        log::info!("║  TARGET                                                                     ║");
+        log::info!("║    Codec:        {:<54}║", self.target_codec);
+        log::info!("║    Sample Rate:  {:<54}║", format!("{} Hz", self.target_sample_rate));
+        log::info!("║    Channels:     {:<54}║", self.target_channels.map(|c| c.to_string()).unwrap_or_else(|| "unchanged".to_string()));
+        log::info!("║                                                                              ║");
+        if self.ffprobe_available {
+            log::info!("║  OUTPUT (probed)                                                            ║");
+            log::info!("║    Codec:        {:<54}║", self.output_codec.as_deref().unwrap_or("N/A"));
+            log::info!("║    Profile:      {:<54}║", self.output_profile.as_deref().unwrap_or("N/A"));
+            log::info!("║    Sample Rate:  {:<54}║", self.output_sample_rate.map(|r| format!("{} Hz", r)).unwrap_or_else(|| "N/A".to_string()));
+            log::info!("║    Channels:     {:<54}║", self.output_channels.map(|c| c.to_string()).unwrap_or_else(|| "N/A".to_string()));
+            log::info!("║    Bitrate:      {:<54}║", self.output_bitrate.map(|b| format!("{} bps", b)).unwrap_or_else(|| "N/A".to_string()));
+            log::info!("║    Duration:     {:<54}║", self.output_duration.map(|d| format!("{:.3}s", d)).unwrap_or_else(|| "N/A".to_string()));
+        } else {
+            log::info!("║  OUTPUT (not probed — ffprobe unavailable)                                  ║");
+        }
+        log::info!("║                                                                              ║");
+        log::info!("║  TRANSFORMATION                                                             ║");
+        log::info!("║    Profile changed:     {:<47}║", if self.profile_changed { "YES" } else { "no" });
+        log::info!("║    Sample rate changed: {:<47}║", if self.sample_rate_changed { "YES" } else { "no" });
+        log::info!("║    Channels changed:    {:<47}║", if self.channels_changed { "YES" } else { "no" });
+        log::info!("║    Bitrate changed:     {:<47}║", if self.bitrate_changed { "YES" } else { "no (preserved)" });
+        log::info!("║    Resample applied:    {:<47}║", if self.resample_applied { "YES" } else { "no" });
+        log::info!("╚══════════════════════════════════════════════════════════════════════════════╝");
+    }
+}
+
+fn truncate_path(path: &str, max_len: usize) -> String {
+    if path.len() <= max_len {
+        path.to_string()
+    } else {
+        format!("...{}", &path[path.len() - max_len + 3..])
     }
 }
 
@@ -2413,6 +2516,93 @@ pub async fn run_ffmpeg_cmd_with_cancel(
     }
 }
 
+/// Probe audio properties of a file for certification audit.
+/// Returns (codec, profile, sample_rate, channels, bitrate, duration).
+fn probe_audio_properties_sync(ffprobe_path: &Path, file_path: &str) -> Option<(String, Option<String>, Option<u32>, Option<u32>, Option<u64>, f64)> {
+    let path = std::path::Path::new(file_path);
+    if !path.exists() {
+        return None;
+    }
+    let info = crate::ffmpeg::probe::probe_file(ffprobe_path, path).ok()?;
+    let audio = info.audio_streams.first()?;
+    Some((
+        audio.codec_name.clone(),
+        audio.profile.clone(),
+        audio.sample_rate,
+        audio.channels,
+        audio.bit_rate,
+        info.duration,
+    ))
+}
+
+/// Create a certification audit record for a normalization operation.
+/// Probes input and output files, compares properties, and logs the full report.
+fn create_normalization_audit(
+    ffprobe_path: Option<&Path>,
+    file_index: usize,
+    input_path: &str,
+    output_path: &str,
+    normalization_type: &str,
+    target_codec: &str,
+    target_sample_rate: u32,
+    target_channels: Option<u32>,
+) -> NormalizationAudit {
+    let ffprobe_available = ffprobe_path.is_some();
+
+    // Probe input properties
+    let (input_codec, input_profile, input_sample_rate, input_channels, input_bitrate, input_duration) =
+        if let Some(fp) = ffprobe_path {
+            probe_audio_properties_sync(fp, input_path)
+                .unwrap_or_else(|| ("unknown".to_string(), None, None, None, None, 0.0))
+        } else {
+            ("unknown".to_string(), None, None, None, None, 0.0)
+        };
+
+    // Probe output properties
+    let (output_codec, output_profile, output_sample_rate, output_channels, output_bitrate, output_duration) =
+        if let Some(fp) = ffprobe_path {
+            probe_audio_properties_sync(fp, output_path)
+                .map(|(c, p, sr, ch, br, dur)| (Some(c), p, sr, ch, br, Some(dur)))
+                .unwrap_or_else(|| (None, None, None, None, None, None))
+        } else {
+            (None, None, None, None, None, None)
+        };
+
+    // Compute transformation summary
+    let profile_changed = input_profile != output_profile && input_profile.is_some() && output_profile.is_some();
+    let sample_rate_changed = input_sample_rate != output_sample_rate && input_sample_rate.is_some() && output_sample_rate.is_some();
+    let channels_changed = input_channels != output_channels && input_channels.is_some() && output_channels.is_some();
+    let bitrate_changed = input_bitrate != output_bitrate && input_bitrate.is_some() && output_bitrate.is_some();
+
+    NormalizationAudit {
+        file_index,
+        input_path: input_path.to_string(),
+        output_path: output_path.to_string(),
+        normalization_type: normalization_type.to_string(),
+        input_codec,
+        input_profile,
+        input_sample_rate,
+        input_channels,
+        input_bitrate,
+        input_duration,
+        target_codec: target_codec.to_string(),
+        target_sample_rate,
+        target_channels,
+        output_codec,
+        output_profile,
+        output_sample_rate,
+        output_channels,
+        output_bitrate,
+        output_duration,
+        profile_changed,
+        sample_rate_changed,
+        channels_changed,
+        bitrate_changed,
+        resample_applied: sample_rate_changed,
+        ffprobe_available,
+    }
+}
+
 /// Re-encode a single video file to match the dominant profile.
 /// Produces `norm_prof_{job_id}_{index}.{ext}` in temp_dir.
 #[allow(clippy::too_many_arguments)]
@@ -2428,6 +2618,8 @@ pub async fn normalize_to_profile(
     norm_cache: Option<Arc<NormalizationCache>>,
     input_duration: Option<f64>,
     input_video_duration_ms: Option<u64>,
+    ffprobe_path: Option<&Path>,
+    input_audio_sample_rate: Option<u32>,
 ) -> Result<String, String> {
     let input = Path::new(input_path);
     let ext = input.extension().and_then(|e| e.to_str()).unwrap_or("mp4");
@@ -2448,11 +2640,19 @@ pub async fn normalize_to_profile(
             args.push("-profile:a".to_string());
             args.push("aac_low".to_string());
         }
-        args.push("-ar".to_string());
-        args.push(profile.sample_rate.to_string());
+        // Only add -ar if sample rate differs from input (skip if already matching)
+        if input_audio_sample_rate != Some(profile.sample_rate) {
+            args.push("-ar".to_string());
+            args.push(profile.sample_rate.to_string());
+        }
         if let Some(ch) = profile.channels {
             args.push("-ac".to_string());
             args.push(ch.to_string());
+        }
+        // Add explicit bitrate if specified (preserves target bitrate instead of FFmpeg default)
+        if let Some(ref br) = profile.bitrate {
+            args.push("-b:a".to_string());
+            args.push(br.clone());
         }
         let af_chain = if let Some(whole_dur) = input_video_duration_ms {
             if whole_dur > 0 {
@@ -2476,8 +2676,8 @@ pub async fn normalize_to_profile(
     let out_str = output_path.to_string_lossy().into_owned();
     args.push(out_str.clone());
     let args_ref: Vec<&str> = args.iter().map(|s| s.as_ref()).collect();
-    log::info!("[FORENSIC:NORMALIZE] Profile re-encode | File #{} | Input: {} | Output: {} | vcodec={} | acodec={} | sr={} | fps={:?} | timescale={:?} | {}x{} | ch={:?} | whole_dur={:?}",
-        index, input_path, out_str, profile.video_codec, profile.audio_codec, profile.sample_rate, profile.fps, profile.timescale, profile.width.unwrap_or(0), profile.height.unwrap_or(0), profile.channels, input_video_duration_ms);
+    log::info!("[FORENSIC:NORMALIZE] Profile re-encode | File #{} | Input: {} | Output: {} | vcodec={} | acodec={} | sr={} | fps={:?} | timescale={:?} | {}x{} | ch={:?} | bitrate={:?} | whole_dur={:?}",
+        index, input_path, out_str, profile.video_codec, profile.audio_codec, profile.sample_rate, profile.fps, profile.timescale, profile.width.unwrap_or(0), profile.height.unwrap_or(0), profile.channels, profile.bitrate, input_video_duration_ms);
 
     let profile_sig = crate::ffmpeg::norm_cache::NormSignature::Profile {
         vcodec: profile.video_codec.clone(),
@@ -2507,6 +2707,19 @@ pub async fn normalize_to_profile(
         let _ = std::fs::remove_file(&output_path);
         return Err(e);
     }
+
+    // ── CERTIFICATION AUDIT: Log before/after comparison ──────────────────
+    let audit = create_normalization_audit(
+        ffprobe_path,
+        index,
+        input_path,
+        &out_str,
+        "profile_reencode",
+        &profile.audio_codec,
+        profile.sample_rate,
+        profile.channels,
+    );
+    audit.log_report();
 
     if let Some(ref _cache) = norm_cache {
         _cache.insert(input_path, profile_sig, output_path.clone());
@@ -2581,6 +2794,8 @@ pub async fn normalize_audio_only(
     cancel_flag: Arc<AtomicBool>,
     norm_cache: Option<Arc<NormalizationCache>>,
     input_video_duration_ms: Option<u64>,
+    ffprobe_path: Option<&Path>,
+    input_audio_sample_rate: Option<u32>,
 ) -> Result<String, String> {
     let input = Path::new(input_path);
     let ext = input.extension().and_then(|e| e.to_str()).unwrap_or("mp4");
@@ -2610,11 +2825,19 @@ pub async fn normalize_audio_only(
         args.push("-profile:a".to_string());
         args.push("aac_low".to_string());
     }
-    args.push("-ar".to_string());
-    args.push(audio_profile.sample_rate.to_string());
+    // Only add -ar if sample rate differs from input (skip if already matching)
+    if input_audio_sample_rate != Some(audio_profile.sample_rate) {
+        args.push("-ar".to_string());
+        args.push(audio_profile.sample_rate.to_string());
+    }
     if let Some(ch) = audio_profile.channels {
         args.push("-ac".to_string());
         args.push(ch.to_string());
+    }
+    // Add explicit bitrate if specified (preserves target bitrate instead of FFmpeg default)
+    if let Some(ref br) = audio_profile.bitrate {
+        args.push("-b:a".to_string());
+        args.push(br.clone());
     }
     let af_chain = if let Some(whole_dur) = input_video_duration_ms {
         if whole_dur > 0 {
@@ -2634,8 +2857,8 @@ pub async fn normalize_audio_only(
     args.push("-avoid_negative_ts".to_string()); args.push("make_zero".to_string());
     args.push(output_path_str.clone());
     let args_ref: Vec<&str> = args.iter().map(|s| s.as_ref()).collect();
-    log::info!("[FORENSIC:NORMALIZE] Audio-only | File #{} | Input: {} | Output: {} | target_acodec={} | sr={} | ts={:?} | ch={:?} | whole_dur={:?}",
-        index, input_path, output_path_str, audio_profile.audio_codec, audio_profile.sample_rate, audio_profile.timescale, audio_profile.channels, input_video_duration_ms);
+    log::info!("[FORENSIC:NORMALIZE] Audio-only | File #{} | Input: {} | Output: {} | target_acodec={} | sr={} | ts={:?} | ch={:?} | bitrate={:?} | whole_dur={:?}",
+        index, input_path, output_path_str, audio_profile.audio_codec, audio_profile.sample_rate, audio_profile.timescale, audio_profile.channels, audio_profile.bitrate, input_video_duration_ms);
 
     let cache_sig = crate::ffmpeg::norm_cache::NormSignature::AudioOnly {
         acodec: audio_profile.audio_codec.clone(),
@@ -2655,6 +2878,19 @@ pub async fn normalize_audio_only(
         let _ = std::fs::remove_file(&output_path);
         return Err(e);
     }
+
+    // ── CERTIFICATION AUDIT: Log before/after comparison ──────────────────
+    let audit = create_normalization_audit(
+        ffprobe_path,
+        index,
+        input_path,
+        &output_path_str,
+        "audio_only_reencode",
+        &audio_profile.audio_codec,
+        audio_profile.sample_rate,
+        audio_profile.channels,
+    );
+    audit.log_report();
 
     if let Some(ref _cache) = norm_cache {
         _cache.insert(input_path, cache_sig, output_path.clone());

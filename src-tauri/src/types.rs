@@ -452,6 +452,23 @@ pub enum NormalizationType {
     Timescale,
 }
 
+/// Audio immutability mode for the merge pipeline.
+///
+/// Controls whether normalized audio files are protected from re-encoding
+/// in the concat step.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+pub enum AudioImmutabilityMode {
+    /// Default: files can be re-encoded at any point in the pipeline
+    Disabled,
+    /// Once normalized, audio is never re-encoded. Only remux/copy allowed.
+    Enabled,
+    /// Same as Enabled, but validates that the normalized file's audio
+    /// matches what the concat step expects before allowing copy
+    Strict,
+}
+
 /// A single completed normalization file in the recovery checkpoint
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

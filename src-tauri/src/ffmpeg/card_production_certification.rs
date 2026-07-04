@@ -243,6 +243,8 @@ mod card_production_certification {
             export_merged_srt: false,
             burn_subtitle_path: None,
             mkvmerge_succeeded_before_ffmpeg: false,
+            audio_normalized: false,
+            immutability_registry: None,
         };
 
         (config, concat_list, interleaved_durs)

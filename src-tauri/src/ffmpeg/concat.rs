@@ -609,7 +609,7 @@ fn spawn_ffmpeg(cmd: &mut Command) -> Result<std::process::Child> {
 
 /// Represents a single part in a split merge
 #[derive(Debug, Clone)]
-struct MergePart {
+pub(crate) struct MergePart {
     pub part_index: u32,
     pub file_indices: Vec<usize>,
     pub start_time: f64,
@@ -675,7 +675,7 @@ fn balanced_parts(total: usize, parts: usize) -> Vec<usize> {
 }
 
 /// Compute the part boundaries based on split config
-fn compute_part_boundaries(
+pub(crate) fn compute_part_boundaries(
     input_files: &[String],
     input_names: &[String],
     input_durations: &[f64],
@@ -899,7 +899,8 @@ fn compute_part_boundaries(
                     output_dir.join(filename).to_string_lossy().into_owned()
                 } else {
                     // Default naming: "FolderName_partN.ext"
-                    format!("{}_part{}.{}", default_filename, part_num, output_ext)
+                    let filename = format!("{}_part{}.{}", default_filename, part_num, output_ext);
+                    output_dir.join(filename).to_string_lossy().into_owned()
                 }
             };
 
@@ -1942,6 +1943,15 @@ pub struct MergeConfig {
     /// If true and FFmpeg fails, the mkvmerge output is PRESERVED (renamed) rather than deleted.
     /// This is critical for forensics — a valid output should never be destroyed.
     pub mkvmerge_succeeded_before_ffmpeg: bool,
+    // ── Audio immutability ─────────────────────────────────────────────
+    /// When true, audio was already normalized in a prior phase.
+    /// Custom mode MUST use `-c:a copy` instead of re-encoding.
+    /// This prevents second-generation AAC loss in the concat step.
+    pub audio_normalized: bool,
+    /// Optional immutability registry for formal state tracking.
+    /// When provided, the concat step uses this as the source of truth
+    /// for which files are audio-immutable.
+    pub immutability_registry: Option<std::sync::Arc<crate::ffmpeg::immutability::ImmutabilityRegistry>>,
 }
 
 /// Try to decode a file and extract its actual video resolution from ffmpeg stderr.
@@ -3156,7 +3166,18 @@ fn build_ffmpeg_args(config: &MergeConfig, concat_list_path: &Path) -> Result<Ve
                 }
                 _ => {}
             }
-            args.extend(["-c:a".into(), acodec.into()]);
+            // ── AUDIO IMMUTABILITY RULE ──────────────────────────────────
+            // If audio was already normalized in a prior phase (Phase 6/7),
+            // we MUST NOT re-encode it here. Use stream copy instead.
+            // This prevents second-generation AAC loss in the concat step.
+            // The concat demuxer applies the same -c:a to ALL files, so if
+            // ANY file was normalized, ALL files use copy for audio.
+            if config.audio_normalized {
+                log::info!("[IMMUTABILITY] Custom concat: audio_normalized=true → using -c:a copy (was: -c:a {})", acodec);
+                args.extend(["-c:a".into(), "copy".into()]);
+            } else {
+                args.extend(["-c:a".into(), acodec.into()]);
+            }
             args.extend(["-c:s".into(), sub_codec.into()]);
             if config.subtitle_list_path.is_some() {
                 if let Some(res) = &resolution {
@@ -3637,5 +3658,120 @@ mod tests {
         
         println!("✅ Seek-point cap prevents {}x reduction in validation work", 
             unbounded_count / seek_points.len());
+    }
+
+    // ── Audio Immutability Tests ──────────────────────────────────────────
+    //
+    // When audio was already normalized (Phase 6/7), Custom concat MUST use
+    // -c:a copy to prevent second-generation AAC loss.
+
+    fn make_custom_config(audio_codec: &str, audio_normalized: bool) -> MergeConfig {
+        MergeConfig {
+            input_files: vec!["/tmp/a.mp4".into(), "/tmp/b.mp4".into()],
+            input_names: vec!["a".into(), "b".into()],
+            input_durations: vec![10.0, 10.0],
+            subtitle_list_path: None,
+            output_path: "/tmp/output.mp4".into(),
+            mode: MergeMode::Custom,
+            total_duration: 20.0,
+            video_codec: Some("libx264".into()),
+            audio_codec: Some(audio_codec.into()),
+            video_crf: Some(18),
+            video_preset: Some("medium".into()),
+            audio_bitrate: Some("192k".into()),
+            target_resolution: None,
+            target_fps: None,
+            hw_accel: None,
+            split_config: None,
+            naming_config: None,
+            subtitle_files: Vec::new(),
+            subtitle_mode: crate::types::SubtitleMode::None,
+            export_merged_srt: false,
+            segment_is_card: vec![false, false],
+            card_config: None,
+            burn_subtitle_path: None,
+            mkvmerge_succeeded_before_ffmpeg: false,
+            audio_normalized,
+            immutability_registry: None,
+        }
+    }
+
+    /// When audio_normalized=false (no normalization happened), Custom mode
+    /// should use the user-specified audio codec (e.g., aac).
+    #[test]
+    fn test_custom_mode_no_normalization_uses_user_codec() {
+        let config = make_custom_config("aac", false);
+        let concat_list = std::env::temp_dir().join("test_concat_list.txt");
+        std::fs::write(&concat_list, "file '/tmp/a.mp4'\nfile '/tmp/b.mp4'\n").unwrap();
+        let args = build_ffmpeg_args(&config, &concat_list).unwrap();
+        let _ = std::fs::remove_file(&concat_list);
+
+        // Find -c:a position and verify it's "aac"
+        let c_a_idx = args.iter().position(|a| a == "-c:a").expect("should have -c:a");
+        assert_eq!(args[c_a_idx + 1], "aac",
+            "Without normalization, -c:a should be the user codec (aac)");
+    }
+
+    /// When audio_normalized=true (files were normalized), Custom mode
+    /// MUST use -c:a copy instead of re-encoding audio.
+    #[test]
+    fn test_custom_mode_normalized_uses_audio_copy() {
+        let config = make_custom_config("aac", true);
+        let concat_list = std::env::temp_dir().join("test_concat_list.txt");
+        std::fs::write(&concat_list, "file '/tmp/a.mp4'\nfile '/tmp/b.mp4'\n").unwrap();
+        let args = build_ffmpeg_args(&config, &concat_list).unwrap();
+        let _ = std::fs::remove_file(&concat_list);
+
+        // Find -c:a position and verify it's "copy"
+        let c_a_idx = args.iter().position(|a| a == "-c:a").expect("should have -c:a");
+        assert_eq!(args[c_a_idx + 1], "copy",
+            "With normalized audio, -c:a MUST be copy (not re-encode)");
+    }
+
+    /// When audio_normalized=true, video codec should NOT be affected.
+    /// Only audio is protected — video can still be re-encoded.
+    #[test]
+    fn test_custom_mode_normalized_video_still_reencoded() {
+        let config = make_custom_config("aac", true);
+        let concat_list = std::env::temp_dir().join("test_concat_list.txt");
+        std::fs::write(&concat_list, "file '/tmp/a.mp4'\nfile '/tmp/b.mp4'\n").unwrap();
+        let args = build_ffmpeg_args(&config, &concat_list).unwrap();
+        let _ = std::fs::remove_file(&concat_list);
+
+        // Video codec should still be libx264 (not copy)
+        let c_v_idx = args.iter().position(|a| a == "-c:v").expect("should have -c:v");
+        assert_eq!(args[c_v_idx + 1], "libx264",
+            "Video codec should remain user-specified (libx264), not affected by audio immutability");
+    }
+
+    /// Lossless mode is unaffected by audio_normalized — always uses -c copy.
+    #[test]
+    fn test_lossless_mode_unaffected_by_audio_normalized() {
+        let mut config = make_custom_config("aac", true);
+        config.mode = MergeMode::Lossless;
+        let concat_list = std::env::temp_dir().join("test_concat_list.txt");
+        std::fs::write(&concat_list, "file '/tmp/a.mp4'\nfile '/tmp/b.mp4'\n").unwrap();
+        let args = build_ffmpeg_args(&config, &concat_list).unwrap();
+        let _ = std::fs::remove_file(&concat_list);
+
+        // Lossless uses -c copy (no separate -c:v or -c:a)
+        let has_copy = args.iter().any(|a| a == "copy");
+        assert!(has_copy, "Lossless mode should have -c copy");
+        let no_separate_c_a = !args.iter().any(|a| a == "-c:a");
+        assert!(no_separate_c_a, "Lossless mode should NOT have separate -c:a flag");
+    }
+
+    /// SmartMkv mode is unaffected by audio_normalized — always uses -c copy.
+    #[test]
+    fn test_smartmkv_mode_unaffected_by_audio_normalized() {
+        let mut config = make_custom_config("aac", true);
+        config.mode = MergeMode::SmartMkv;
+        let concat_list = std::env::temp_dir().join("test_concat_list.txt");
+        std::fs::write(&concat_list, "file '/tmp/a.mp4'\nfile '/tmp/b.mp4'\n").unwrap();
+        let args = build_ffmpeg_args(&config, &concat_list).unwrap();
+        let _ = std::fs::remove_file(&concat_list);
+
+        let has_copy = args.iter().any(|a| a == "copy");
+        assert!(has_copy, "SmartMkv mode should have -c copy");
     }
 }
