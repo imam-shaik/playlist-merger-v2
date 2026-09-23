@@ -648,12 +648,17 @@ fn find_common_parent(paths: &[String], segment_is_card: &[bool]) -> Option<std:
 
 fn get_top_level_component(common_parent: &Path, file_path: &Path) -> String {
     if let Ok(rel) = file_path.strip_prefix(common_parent) {
-        if let Some(first_comp) = rel.components().next() {
-            let comp_str = first_comp.as_os_str().to_string_lossy().into_owned();
-            if rel.components().count() == 1 {
-                return "Root".to_string();
-            }
-            return comp_str;
+        let components: Vec<_> = rel.components().collect();
+        if components.len() == 1 {
+            // File is directly in common_parent - use common_parent's folder name
+            // This handles the case where all files are in the same folder
+            return common_parent.file_name()
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "Root".to_string());
+        }
+        if let Some(first_comp) = components.first() {
+            return first_comp.as_os_str().to_string_lossy().into_owned();
         }
     }
     "Root".to_string()
@@ -905,6 +910,9 @@ pub(crate) fn compute_part_boundaries(
             };
 
             let mut global_part_idx = 0u32;
+
+            // Sort folder groups by folder name for consistent, predictable output ordering
+            folder_groups.sort_by(|a, b| a.0.cmp(&b.0));
 
             for (folder_name, units) in folder_groups {
                 if split_into_parts {
@@ -2592,9 +2600,10 @@ let _part_start_time_for_progress = if is_first_part { 0.0 } else {
             });
 
             // Skip SRT export check: if part output exists, assume SRT also done if it was requested
+            // Export per-part SRT whenever subtitles are being processed (Embed or ExportSrt mode)
             let should_export_srt = split_subtitle_mode
                 .map(|m| matches!(m, SplitSubtitleMode::ExportSrt))
-                .unwrap_or(*global_subtitle_mode == SubtitleMode::ExportSrt || config.export_merged_srt);
+                .unwrap_or(config.export_merged_srt || *global_subtitle_mode == SubtitleMode::ExportSrt || *global_subtitle_mode == SubtitleMode::Embed);
             if should_export_srt {
                 let part_srt_path = Path::new(&part.output_path).with_extension("srt");
                 if part_srt_path.exists() {
@@ -2667,9 +2676,11 @@ crate::ffmpeg::write_concat_list_with_durations(
         // (split_subtitle_mode and global_subtitle_mode already defined earlier in loop)
 
         // should_export_srt: export SRT file for each part
+        // Per-part SRT is generated alongside video whenever subtitles are being processed
+        // (Embed mode) — each split output gets its own companion .srt file
         let should_export_srt = split_subtitle_mode
             .map(|m| matches!(m, SplitSubtitleMode::ExportSrt))
-            .unwrap_or(*global_subtitle_mode == SubtitleMode::ExportSrt || config.export_merged_srt);
+            .unwrap_or(config.export_merged_srt || *global_subtitle_mode == SubtitleMode::ExportSrt || *global_subtitle_mode == SubtitleMode::Embed);
 
         // should_handle_subs: whether to create subtitle concat list
         // Note: should_embed_subs is determined by part_config.subtitle_mode in build_ffmpeg_args
